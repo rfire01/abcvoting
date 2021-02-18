@@ -26,7 +26,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         # these are optional requirements, but we want GLPK_MI to be installed to run more unitests
-        pip install cvxpy
+        pip install "cvxpy>=1.1.10"
         pip install cvxopt
 
     - name: Test if solver GLPK_MI is installed
