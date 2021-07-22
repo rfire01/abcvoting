@@ -5,9 +5,9 @@ import functools
 from itertools import combinations
 from abcvoting.output import output
 from abcvoting import abcrules_gurobi, abcrules_ortools, abcrules_cvxpy, abcrules_mip, misc
-from abcvoting.misc import sorted_committees
+from abcvoting.misc import sorted_project_sets
 from abcvoting.misc import check_enough_approved_candidates
-from abcvoting.misc import str_committees_header, header
+from abcvoting.misc import str_project_sets_header, header
 from abcvoting.misc import str_set_of_candidates, str_sets_of_candidates
 from abcvoting import scores
 from fractions import Fraction
@@ -166,7 +166,7 @@ def get_rule(rule_id):
             shortname="AV",
             longname="Approval Voting (AV)",
             compute_fct=compute_av,
-            algorithms=("standard",),
+            algorithms=("gurobi",),
             resolute_values=_RESOLUTE_VALUES_FOR_OPTIMIZATION_BASED_RULES,
         )
     if rule_id == "sav":
@@ -391,23 +391,23 @@ def get_rule(rule_id):
 ########################################################################
 
 
-def compute(rule_id, profile, committeesize, expected_committees=None, **kwargs):
+def compute(rule_id, profile, budget, expected_committees=None, **kwargs):
     """Compute rule given by `rule_id`."""
     rule = get_rule(rule_id)
-    committees = rule.compute(profile, committeesize, **kwargs)
+    project_sets = rule.compute(profile, budget, **kwargs)
     if expected_committees is not None:
         resolute = kwargs.get("resolute", False)
         misc.verify_expected_committees_equals_actual_committees(
-            actual_committees=committees,
-            expected_committees=expected_committees,
+            actual_project_sets=project_sets,
+            expected_project_sets=expected_committees,
             resolute=resolute,
             shortname=rule.shortname,
         )
-    return committees
+    return project_sets
 
 
 def compute_thiele_method(
-    profile, committeesize, scorefct_id, algorithm="fastest", resolute=False
+    profile, budget, scorefct_id, algorithm="fastest", resolute=False
 ):
     """Thiele methods.
 
@@ -423,8 +423,8 @@ def compute_thiele_method(
     "Approval-Based Multi-Winner Voting: Axioms, Algorithms, and Applications"
     https://arxiv.org/abs/2007.01795
     """
-    check_enough_approved_candidates(profile, committeesize)
-    scorefct = scores.get_scorefct(scorefct_id, committeesize)
+    # check_enough_approved_candidates(profile, budget)
+    scorefct = scores.get_scorefct(scorefct_id, budget)
 
     rule = get_rule(scorefct_id)
 
@@ -432,35 +432,35 @@ def compute_thiele_method(
         algorithm = rule.fastest_available_algorithm
 
     if algorithm == "gurobi":
-        committees = abcrules_gurobi._gurobi_thiele_methods(
-            profile, committeesize, scorefct, resolute
+        project_sets = abcrules_gurobi._gurobi_thiele_methods(
+            profile, budget, scorefct, resolute
         )
     elif algorithm == "branch-and-bound":
-        committees, detailed_info = _thiele_methods_branchandbound(
-            profile, committeesize, scorefct_id, resolute
+        project_sets, detailed_info = _thiele_methods_branchandbound(
+            profile, budget, scorefct_id, resolute
         )
     elif algorithm == "brute-force":
-        committees, detailed_info = _thiele_methods_bruteforce(
-            profile, committeesize, scorefct_id, resolute
+        project_sets, detailed_info = _thiele_methods_bruteforce(
+            profile, budget, scorefct_id, resolute
         )
     elif algorithm.startswith("cvxpy_"):
-        committees = abcrules_cvxpy.cvxpy_thiele_methods(
+        project_sets = abcrules_cvxpy.cvxpy_thiele_methods(
             profile=profile,
-            committeesize=committeesize,
+            budget=budget,
             scorefct_id=scorefct_id,
             resolute=resolute,
             solver_id=algorithm[6:],
         )
     elif algorithm.startswith("mip_"):
-        committees = abcrules_mip._mip_thiele_methods(
+        project_sets = abcrules_mip._mip_thiele_methods(
             profile,
-            committeesize,
+            budget,
             scorefct=scorefct,
             resolute=resolute,
             solver_id=algorithm[4:],
         )
     elif algorithm == "ortools_cp" and scorefct_id == "cc":
-        committees = abcrules_ortools._ortools_cc(profile, committeesize, resolute)
+        project_sets = abcrules_ortools._ortools_cc(profile, budget, resolute)
     else:
         raise NotImplementedError(
             "Algorithm " + str(algorithm) + " not specified for compute_thiele_method"
@@ -469,44 +469,45 @@ def compute_thiele_method(
     # optional output
     output.info(header(rule.longname))
     if resolute:
-        output.info("Computing only one winning committee (resolute=True)\n")
+        output.info("Computing only one winning project set (resolute=True)\n")
     output.details(f"Algorithm: {ALGORITHM_NAMES[algorithm]}\n")
 
     output.details(
         f"Optimal {scorefct_id.upper()}-score: "
-        f"{scores.thiele_score(scorefct_id, profile, committees[0])}\n"
+        f"{scores.thiele_score(scorefct_id, profile, project_sets[0])}\n"
     )
 
-    output.info(str_committees_header(committees, winning=True))
-    output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
+    output.info(str_project_sets_header(project_sets, winning=True))
+    output.info(str_sets_of_candidates(project_sets, cand_names=profile.cand_names))
     # end of optional output
 
-    return committees
+    return project_sets
 
 
-def _thiele_methods_bruteforce(profile, committeesize, scorefct_id, resolute):
+def _thiele_methods_bruteforce(profile, budget, scorefct_id, resolute):
     """Brute-force algorithm for Thiele methods (PAV, CC, etc.).
 
     Only intended for comparison, much slower than _thiele_methods_branchandbound()
     """
-    opt_committees = []
+    opt_project_sets = []
     opt_thiele_score = -1
-    for committee in combinations(profile.candidates, committeesize):
-        score = scores.thiele_score(scorefct_id, profile, committee)
+    for project_set in combinations(profile.candidates, budget):
+        score = scores.thiele_score(scorefct_id, profile, project_set)
         if score > opt_thiele_score:
-            opt_committees = [committee]
+            opt_project_sets = [project_set]
             opt_thiele_score = score
         elif score == opt_thiele_score:
-            opt_committees.append(committee)
+            opt_project_sets.append(project_set)
 
-    committees = sorted_committees(opt_committees)
+    project_sets = sorted_project_sets(opt_project_sets)
     detailed_info = {}
     if resolute:
-        committees = [committees[0]]
-    return committees, detailed_info
+        project_sets = [project_sets[0]]
+    return project_sets, detailed_info
 
 
 def _thiele_methods_branchandbound(profile, committeesize, scorefct_id, resolute):
+    # TODO: convert to PB
     """Branch-and-bound algorithm for Thiele methods."""
     scorefct = scores.get_scorefct(scorefct_id, committeesize)
 
@@ -540,7 +541,7 @@ def _thiele_methods_branchandbound(profile, committeesize, scorefct_id, resolute
                 for cand in range(largest_cand + 1, profile.num_cand - missing + 1):
                     part_coms.insert(0, part_com + [cand])
 
-    committees = sorted_committees(best_committees)
+    committees = sorted_project_sets(best_committees)
     if resolute:
         committees = [committees[0]]
 
@@ -548,7 +549,7 @@ def _thiele_methods_branchandbound(profile, committeesize, scorefct_id, resolute
     return committees, detailed_info
 
 
-def compute_pav(profile, committeesize, algorithm="fastest", resolute=False):
+def compute_pav(profile, budget, algorithm="fastest", resolute=False):
     """Proportional Approval Voting (PAV).
 
     This ABC rule belongs to the class of Thiele methods.
@@ -559,11 +560,11 @@ def compute_pav(profile, committeesize, algorithm="fastest", resolute=False):
     https://arxiv.org/abs/2007.01795
     """
     return compute_thiele_method(
-        profile, committeesize, "pav", algorithm=algorithm, resolute=resolute
+        profile, budget, "pav", algorithm=algorithm, resolute=resolute
     )
 
 
-def compute_slav(profile, committeesize, algorithm="fastest", resolute=False):
+def compute_slav(profile, budget, algorithm="fastest", resolute=False):
     """Sainte-Lague Approval Voting (SLAV).
 
     This ABC rule belongs to the class of Thiele methods.
@@ -575,11 +576,11 @@ def compute_slav(profile, committeesize, algorithm="fastest", resolute=False):
     https://arxiv.org/abs/1801.01527
     """
     return compute_thiele_method(
-        profile, committeesize, "slav", algorithm=algorithm, resolute=resolute
+        profile, budget, "slav", algorithm=algorithm, resolute=resolute
     )
 
 
-def compute_cc(profile, committeesize, algorithm="fastest", resolute=False):
+def compute_cc(profile, budget, algorithm="fastest", resolute=False):
     """Approval Chamberlin-Courant (CC).
 
     This ABC rule belongs to the class of Thiele methods.
@@ -590,12 +591,12 @@ def compute_cc(profile, committeesize, algorithm="fastest", resolute=False):
     https://arxiv.org/abs/2007.01795
     """
     return compute_thiele_method(
-        profile, committeesize, "cc", algorithm=algorithm, resolute=resolute
+        profile, budget, "cc", algorithm=algorithm, resolute=resolute
     )
 
 
 def compute_seq_thiele_method(
-    profile, committeesize, scorefct_id, algorithm="fastest", resolute=True
+    profile, budget, scorefct_id, algorithm="fastest", resolute=True
 ):
     """Sequential Thiele methods.
 
@@ -604,8 +605,8 @@ def compute_seq_thiele_method(
     "Approval-Based Multi-Winner Voting: Axioms, Algorithms, and Applications"
     https://arxiv.org/abs/2007.01795
     """
-    check_enough_approved_candidates(profile, committeesize)
-    scores.get_scorefct(scorefct_id, committeesize)  # check that scorefct_id is valid
+    # check_enough_approved_candidates(profile, committeesize)
+    scores.get_scorefct(scorefct_id)  # check that scorefct_id is valid
 
     rule_id = "seq" + scorefct_id
     rule = get_rule(rule_id)
@@ -618,9 +619,9 @@ def compute_seq_thiele_method(
         )
 
     if resolute:
-        committees, detailed_info = _seq_thiele_resolute(profile, committeesize, scorefct_id)
+        committees, detailed_info = _seq_thiele_resolute(profile, budget, scorefct_id)
     else:
-        committees, detailed_info = _seq_thiele_irresolute(profile, committeesize, scorefct_id)
+        committees, detailed_info = _seq_thiele_irresolute(profile, budget, scorefct_id)
 
     # optional output
     output.info(header(rule.longname))
@@ -640,7 +641,7 @@ def compute_seq_thiele_method(
             tied_cands = detailed_info["tied_cands"][i]
             delta_score = detailed_info["delta_score"][i]
             committee.append(next_cand)
-            output.details(f"adding candidate number {i+1}: {profile.cand_names[next_cand]}")
+            output.details(f"adding candidate number {i+1}: {next_cand}")
             output.details(
                 f" score increases by {delta_score} to"
                 f" a total of {scores.thiele_score(scorefct_id, profile, committee)}"
@@ -654,7 +655,7 @@ def compute_seq_thiele_method(
                 )
             output.details("")
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
 
     output.details(scorefct_id.upper() + "-score of winning committee(s):")
@@ -666,62 +667,89 @@ def compute_seq_thiele_method(
     output.details("\n")
     # end of optional output
 
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
-def _seq_thiele_resolute(profile, committeesize, scorefct_id):
+def _seq_thiele_resolute(profile, budget, scorefct_id):
     """Compute one winning committee (=resolute) for sequential Thiele methods.
 
     Tiebreaking between candidates in favor of candidate with smaller
     number/index (candidates with larger numbers get deleted first).
     """
     committee = []
-    scorefct = scores.get_scorefct(scorefct_id, committeesize)
+    scorefct = scores.get_scorefct(scorefct_id)
     detailed_info = {"next_cand": [], "tied_cands": [], "delta_score": []}
 
     # build a committee starting with the empty set
-    for _ in range(committeesize):
+    current_budget = budget
+    while True:
         additional_score_cand = scores.marginal_thiele_scores_add(scorefct, profile, committee)
-        next_cand = additional_score_cand.index(max(additional_score_cand))
+        sorted_candidates = sorted(additional_score_cand, key=additional_score_cand.get, reverse=True)
+
+        next_cand = None
+        for cand in sorted_candidates:
+            if profile.costs[cand] <= current_budget:
+                next_cand = cand
+                break
+
+        if next_cand is None:
+            break
+
         committee.append(next_cand)
         tied_cands = [
             cand
-            for cand in range(len(additional_score_cand))
-            if additional_score_cand[cand] == max(additional_score_cand)
+            for cand in additional_score_cand
+            if additional_score_cand[cand] == additional_score_cand[next_cand] and
+               profile.costs[cand] <= current_budget
         ]
+        current_budget = current_budget - profile.costs[next_cand]
+
         detailed_info["next_cand"].append(next_cand)
         detailed_info["tied_cands"].append(tied_cands)
         detailed_info["delta_score"].append(max(additional_score_cand))
 
-    return sorted_committees([committee]), detailed_info
+    return sorted_project_sets([committee]), detailed_info
 
 
-def _seq_thiele_irresolute(profile, committeesize, scorefct_id):
+def _seq_thiele_irresolute(profile, budget, scorefct_id):
     """Compute all winning committee (=irresolute) for sequential Thiele methods.
 
     Consider all possible ways to break ties between candidates
     (aka parallel universe tiebreaking)
     """
-    scorefct = scores.get_scorefct(scorefct_id, committeesize)
+    scorefct = scores.get_scorefct(scorefct_id)
 
     comm_scores = {(): 0}
     # build committees starting with the empty set
-    for _ in range(committeesize):
+    # for _ in range(committeesize):
+
+    exhausted_sets = {}
+    while True:
         comm_scores_next = {}
         for committee, score in comm_scores.items():
+            if profile.exhausted_budget(committee, budget):
+                exhausted_sets[committee] = score
+                continue
+
             # marginal utility gained by adding candidate to the committee
             additional_score_cand = scores.marginal_thiele_scores_add(scorefct, profile, committee)
-            for cand in profile.candidates:
-                if additional_score_cand[cand] >= max(additional_score_cand):
+            max_marginal = max(additional_score_cand.values())
+            for cand in profile.cand_names:
+                if additional_score_cand[cand] >= max_marginal:
                     next_comm = tuple(sorted(committee + (cand,)))
                     comm_scores_next[next_comm] = score + additional_score_cand[cand]
+
+        if comm_scores_next == {}:
+            break
+
         comm_scores = comm_scores_next
+
     detailed_info = {}
-    return sorted_committees(list(comm_scores.keys())), detailed_info
+    return sorted_project_sets(list(exhausted_sets.keys())), detailed_info
 
 
 # Sequential PAV
-def compute_seqpav(profile, committeesize, algorithm="fastest", resolute=True):
+def compute_seqpav(profile, budget, algorithm="fastest", resolute=True):
     """Sequential PAV (seq-PAV).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -730,11 +758,11 @@ def compute_seqpav(profile, committeesize, algorithm="fastest", resolute=True):
     https://arxiv.org/abs/2007.01795
     """
     return compute_seq_thiele_method(
-        profile, committeesize, "pav", algorithm=algorithm, resolute=resolute
+        profile, budget, "pav", algorithm=algorithm, resolute=resolute
     )
 
 
-def compute_seqslav(profile, committeesize, algorithm="fastest", resolute=True):
+def compute_seqslav(profile, budget, algorithm="fastest", resolute=True):
     """Sequential Sainte-Lague Approval Voting (SLAV).
 
     For a mathematical description of SLAV, see e.g.
@@ -744,11 +772,11 @@ def compute_seqslav(profile, committeesize, algorithm="fastest", resolute=True):
     https://arxiv.org/abs/1801.01527
     """
     return compute_seq_thiele_method(
-        profile, committeesize, "slav", algorithm=algorithm, resolute=resolute
+        profile, budget, "slav", algorithm=algorithm, resolute=resolute
     )
 
 
-def compute_seqcc(profile, committeesize, algorithm="fastest", resolute=True):
+def compute_seqcc(profile, budget, algorithm="fastest", resolute=True):
     """Sequential Chamberlin-Courant (seq-CC).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -757,11 +785,12 @@ def compute_seqcc(profile, committeesize, algorithm="fastest", resolute=True):
     https://arxiv.org/abs/2007.01795
     """
     return compute_seq_thiele_method(
-        profile, committeesize, "cc", algorithm=algorithm, resolute=resolute
+        profile, budget, "cc", algorithm=algorithm, resolute=resolute
     )
 
 
 def compute_revseq_thiele_method(
+    # TODO: convert to PB
     profile, committeesize, scorefct_id, algorithm="fastest", resolute=True
 ):
     """Reverse sequential Thiele methods.
@@ -825,7 +854,7 @@ def compute_revseq_thiele_method(
                 )
             output.details("")
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
 
     msg = "PAV-score of winning committee:"
@@ -841,6 +870,7 @@ def compute_revseq_thiele_method(
 
 
 def _revseq_thiele_resolute(profile, committeesize, scorefct_id):
+    # TODO: convert to PB
     """Compute one winning committee (=resolute) for reverse sequential Thiele methods.
 
     Tiebreaking between candidates in favor of candidate with smaller
@@ -865,10 +895,11 @@ def _revseq_thiele_resolute(profile, committeesize, scorefct_id):
         detailed_info["tied_cands"].append(tied_cands)
         detailed_info["delta_score"].append(min(marg_util_cand))
 
-    return sorted_committees([committee]), detailed_info
+    return sorted_project_sets([committee]), detailed_info
 
 
 def _revseq_thiele_irresolute(profile, committeesize, scorefct_id):
+    # TODO: convert to PB
     """Compute all winning committee (=irresolute) for reverse sequential Thiele methods.
 
     Consider all possible ways to break ties between candidates
@@ -894,11 +925,11 @@ def _revseq_thiele_irresolute(profile, committeesize, scorefct_id):
             comm_scores = comm_scores_next
 
     detailed_info = {}
-    return sorted_committees(list(comm_scores.keys())), detailed_info
+    return sorted_project_sets(list(comm_scores.keys())), detailed_info
 
 
 # Reverse Sequential PAV
-def compute_revseqpav(profile, committeesize, algorithm="fastest", resolute=True):
+def compute_revseqpav(profile, budget, algorithm="fastest", resolute=True):
     """Reverse sequential PAV (revseq-PAV).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -907,11 +938,12 @@ def compute_revseqpav(profile, committeesize, algorithm="fastest", resolute=True
     https://arxiv.org/abs/2007.01795
     """
     return compute_revseq_thiele_method(
-        profile, committeesize, "pav", algorithm=algorithm, resolute=resolute
+        profile, budget, "pav", algorithm=algorithm, resolute=resolute
     )
 
 
 def compute_separable_rule(rule_id, profile, committeesize, algorithm, resolute=True):
+    # TODO: convert to PB
     """Separable rules (such as AV and SAV).
 
     For a mathematical description of separable rules (for ranking-based rules), see
@@ -971,7 +1003,7 @@ def compute_separable_rule(rule_id, profile, committeesize, algorithm, resolute=
         msg += f"({missing} of those candidates are contained\n in every winning committee.)\n"
         output.details(msg)
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
@@ -979,6 +1011,7 @@ def compute_separable_rule(rule_id, profile, committeesize, algorithm, resolute=
 
 
 def _separable_rule_algorithm(profile, committeesize, rule_id, resolute):
+    # TODO: convert to PB
     """Algorithm for separable rules (such as AV and SAV)."""
     score = [0] * profile.num_cand
     for voter in profile:
@@ -1007,9 +1040,9 @@ def _separable_rule_algorithm(profile, committeesize, rule_id, resolute):
         missing = 0
 
     if resolute:
-        committees = sorted_committees([(certain_cands + possible_cands[:missing])])
+        committees = sorted_project_sets([(certain_cands + possible_cands[:missing])])
     else:
-        committees = sorted_committees(
+        committees = sorted_project_sets(
             [
                 (certain_cands + list(selection))
                 for selection in combinations(possible_cands, missing)
@@ -1025,7 +1058,7 @@ def _separable_rule_algorithm(profile, committeesize, rule_id, resolute):
     return committees, detailed_info
 
 
-def compute_sav(profile, committeesize, algorithm="fastest", resolute=False):
+def compute_sav(profile, budget, algorithm="fastest", resolute=False):
     """Satisfaction Approval Voting (SAV).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -1033,10 +1066,10 @@ def compute_sav(profile, committeesize, algorithm="fastest", resolute=False):
     "Approval-Based Multi-Winner Voting: Axioms, Algorithms, and Applications"
     https://arxiv.org/abs/2007.01795
     """
-    return compute_separable_rule("sav", profile, committeesize, algorithm, resolute)
+    return compute_separable_rule("sav", profile, budget, algorithm, resolute)
 
 
-def compute_av(profile, committeesize, algorithm="fastest", resolute=False):
+def compute_av(profile, budget, algorithm="fastest", resolute=False):
     """Approval Voting (AV).
 
     AV is both a Thiele method and a separable rule. Seperable rules can be computed much
@@ -1048,10 +1081,14 @@ def compute_av(profile, committeesize, algorithm="fastest", resolute=False):
     "Approval-Based Multi-Winner Voting: Axioms, Algorithms, and Applications"
     https://arxiv.org/abs/2007.01795
     """
-    return compute_separable_rule("av", profile, committeesize, algorithm, resolute)
+    return compute_thiele_method(
+        profile, budget, "av", algorithm=algorithm, resolute=resolute
+    )
+    # return compute_separable_rule("av", profile, budget, algorithm, resolute)
 
 
-def compute_minimaxav(profile, committeesize, algorithm="fastest", resolute=False):
+def compute_minimaxav(profile, budget, algorithm="fastest", resolute=False):
+    # TODO: convert to PB
     """Minimax Approval Voting (MAV).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -1059,7 +1096,7 @@ def compute_minimaxav(profile, committeesize, algorithm="fastest", resolute=Fals
     "Approval-Based Multi-Winner Voting: Axioms, Algorithms, and Applications"
     https://arxiv.org/abs/2007.01795
     """
-    check_enough_approved_candidates(profile, committeesize)
+    check_enough_approved_candidates(profile, budget)
 
     rule = get_rule("minimaxav")
 
@@ -1067,14 +1104,14 @@ def compute_minimaxav(profile, committeesize, algorithm="fastest", resolute=Fals
         algorithm = rule.fastest_available_algorithm
 
     if algorithm == "gurobi":
-        committees = abcrules_gurobi._gurobi_minimaxav(profile, committeesize, resolute)
+        committees = abcrules_gurobi._gurobi_minimaxav(profile, budget, resolute)
     elif algorithm == "ortools_cp":
-        committees = abcrules_ortools._ortools_minimaxav(profile, committeesize, resolute)
+        committees = abcrules_ortools._ortools_minimaxav(profile, budget, resolute)
     elif algorithm.startswith("mip_"):
         solver_id = algorithm[4:]
-        committees = abcrules_mip._mip_minimaxav(profile, committeesize, resolute, solver_id)
+        committees = abcrules_mip._mip_minimaxav(profile, budget, resolute, solver_id)
     elif algorithm == "brute-force":
-        committees, detailed_info = _minimaxav_bruteforce(profile, committeesize, resolute)
+        committees, detailed_info = _minimaxav_bruteforce(profile, budget, resolute)
     else:
         raise NotImplementedError(
             "Algorithm " + str(algorithm) + " not specified for compute_minimaxav"
@@ -1087,7 +1124,7 @@ def compute_minimaxav(profile, committeesize, algorithm="fastest", resolute=Fals
     output.details(f"Algorithm: {ALGORITHM_NAMES[algorithm]}\n")
 
     opt_minimaxav_score = scores.mavscore(profile, committees[0])
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     output.details("Minimum maximal distance: " + str(opt_minimaxav_score))
     msg = "Corresponding distances to voters:\n"
@@ -1100,6 +1137,7 @@ def compute_minimaxav(profile, committeesize, algorithm="fastest", resolute=Fals
 
 
 def _minimaxav_bruteforce(profile, committeesize, resolute):
+    # TODO: convert to PB
     """Brute-force algorithm for Minimax AV (MAV)."""
     opt_committees = []
     opt_minimaxav_score = profile.num_cand + 1
@@ -1111,7 +1149,7 @@ def _minimaxav_bruteforce(profile, committeesize, resolute):
         elif score == opt_minimaxav_score:
             opt_committees.append(committee)
 
-    committees = sorted_committees(opt_committees)
+    committees = sorted_project_sets(opt_committees)
     detailed_info = {}
     if resolute:
         committees = [committees[0]]
@@ -1119,6 +1157,7 @@ def _minimaxav_bruteforce(profile, committeesize, resolute):
 
 
 def compute_lexminimaxav(profile, committeesize, algorithm="fastest", resolute=False):
+    # TODO: convert to PB
     """Lexicographic Minimax AV (lex-MAV).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -1150,7 +1189,7 @@ def compute_lexminimaxav(profile, committeesize, algorithm="fastest", resolute=F
     if resolute:
         output.info("Computing only one winning committee (resolute=True)\n")
     output.details(f"Algorithm: {ALGORITHM_NAMES[algorithm]}\n")
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     output.details("Minimum maximal distance: " + str(max(opt_distances)))
     msg = "Corresponding distances to voters:\n"
@@ -1163,6 +1202,7 @@ def compute_lexminimaxav(profile, committeesize, algorithm="fastest", resolute=F
 
 
 def _lexminimaxav_bruteforce(profile, committeesize, resolute):
+    # TODO: convert to PB
     opt_committees = []
     opt_distances = [profile.num_cand + 1] * len(profile)
     for committee in combinations(profile.candidates, committeesize):
@@ -1179,7 +1219,7 @@ def _lexminimaxav_bruteforce(profile, committeesize, resolute):
         else:
             opt_committees.append(committee)
 
-    committees = sorted_committees(opt_committees)
+    committees = sorted_project_sets(opt_committees)
     detailed_info = {"opt_distances": opt_distances}
     if resolute:
         committees = [committees[0]]
@@ -1187,6 +1227,7 @@ def _lexminimaxav_bruteforce(profile, committeesize, resolute):
 
 
 def compute_monroe(profile, committeesize, algorithm="fastest", resolute=False):
+    # TODO: convert to PB
     """Monroe's rule.
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -1231,7 +1272,7 @@ def compute_monroe(profile, committeesize, algorithm="fastest", resolute=False):
         "Optimal Monroe score: " + str(scores.monroescore(profile, committees[0])) + "\n"
     )
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
@@ -1239,6 +1280,7 @@ def compute_monroe(profile, committeesize, algorithm="fastest", resolute=False):
 
 
 def _monroe_bruteforce(profile, committeesize, resolute):
+    # TODO: convert to PB
     """Brute-force algorithm for Monroe's rule."""
     opt_committees = []
     opt_monroescore = -1
@@ -1250,7 +1292,7 @@ def _monroe_bruteforce(profile, committeesize, resolute):
         elif scores.monroescore(profile, committee) == opt_monroescore:
             opt_committees.append(committee)
 
-    committees = sorted_committees(opt_committees)
+    committees = sorted_project_sets(opt_committees)
     if resolute:
         committees = [committees[0]]
 
@@ -1259,6 +1301,7 @@ def _monroe_bruteforce(profile, committeesize, resolute):
 
 
 def compute_greedy_monroe(profile, committeesize, algorithm="fastest", resolute=True):
+    # TODO: convert to PB
     """Greedy Monroe.
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -1333,14 +1376,15 @@ def compute_greedy_monroe(profile, committeesize, algorithm="fastest", resolute=
         msg += assing_msg[:-2] + "\n"
     output.details(msg)
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _greedy_monroe_algorithm(profile, committeesize):
+    # TODO: convert to PB
     """Algorithm for Greedy Monroe."""
     num_voters = len(profile)
     committee = []
@@ -1375,7 +1419,7 @@ def _greedy_monroe_algorithm(profile, committeesize):
         remaining_cands.remove(selected)
 
     detailed_info = {"remaining_voters": remaining_voters, "assignment": assignment}
-    return sorted_committees([committee]), detailed_info
+    return sorted_project_sets([committee]), detailed_info
 
 
 def compute_seqphragmen(profile, committeesize, algorithm="fastest", resolute=True):
@@ -1386,7 +1430,7 @@ def compute_seqphragmen(profile, committeesize, algorithm="fastest", resolute=Tr
     "Approval-Based Multi-Winner Voting: Axioms, Algorithms, and Applications"
     https://arxiv.org/abs/2007.01795
     """
-    check_enough_approved_candidates(profile, committeesize)
+    # check_enough_approved_candidates(profile, committeesize)
 
     rule = get_rule("seqphragmen")
 
@@ -1426,7 +1470,7 @@ def compute_seqphragmen(profile, committeesize, algorithm="fastest", resolute=Tr
                 msg += str(load[v]) + ", "
             output.details(msg[:-2] + ")")
             if len(tied_cands) > 1:
-                msg = " tie broken in favor of " + profile.cand_names[next_cand]
+                msg = " tie broken in favor of " + str(next_cand)
                 msg += ",\n candidates " + str_set_of_candidates(
                     tied_cands, cand_names=profile.cand_names
                 )
@@ -1434,7 +1478,7 @@ def compute_seqphragmen(profile, committeesize, algorithm="fastest", resolute=Tr
                 output.details(msg)
             output.details("")
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
 
     if resolute or len(committees) == 1:
@@ -1448,7 +1492,7 @@ def compute_seqphragmen(profile, committeesize, algorithm="fastest", resolute=Tr
         output.details(msg[:-2] + ")")
     # end of optional output
 
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _seqphragmen_resolute(
@@ -1485,7 +1529,8 @@ def _seqphragmen_resolute(
         "max_load": [],
     }
 
-    for _ in range(len(committee), committeesize):
+    # for _ in range(len(committee), committeesize):
+    while not profile.exhausted_budget(committee, committeesize):
         approvers_load = {}
         for cand in profile.candidates:
             approvers_load[cand] = sum(
@@ -1559,9 +1604,15 @@ def _seqphragmen_irresolute(
         partial_committee = tuple(partial_committee)
     comm_loads = [(partial_committee, load)]
 
-    for _ in range(len(partial_committee), committeesize):
+    exhausted_sets = []
+    # for _ in range(len(partial_committee), committeesize):
+    while True:
         comm_loads_next = []
         for (committee, load) in comm_loads:
+            if profile.exhausted_budget(committee, committeesize):
+                exhausted_sets.append((committee, load))
+                continue
+
             approvers_load = {}
             for cand in profile.candidates:
                 approvers_load[cand] = sum(
@@ -1596,10 +1647,14 @@ def _seqphragmen_irresolute(
                             new_load[v] = load[v]
                     new_comm = committee + (cand,)
                     comm_loads_next.append((new_comm, new_load))
+
+        if comm_loads_next == []:
+            break
+
         comm_loads = comm_loads_next
 
     # final list of committees (sort and remove duplicates)
-    committees = sorted_committees(set(tuple(sorted(committee)) for (committee, _) in comm_loads))
+    committees = sorted_project_sets(set(tuple(sorted(committee)) for (committee, _) in exhausted_sets))
     detailed_info = {"comm_loads": comm_loads}
     return committees, detailed_info
 
@@ -1623,7 +1678,7 @@ def compute_rule_x(
         omit the second phase (that uses seq-Phragmen)
         may result in a committee that is too small (length smaller than `committeesize`)
     """
-    check_enough_approved_candidates(profile, committeesize)
+    # check_enough_approved_candidates(profile, committeesize)
 
     if skip_phragmen_phase:
         rule_id = "rule-x-without-phragmen-phase"
@@ -1677,7 +1732,7 @@ def compute_rule_x(
             output.details(msg[:-2] + ")")
             if len(tied_cands) > 1:
                 msg = " tie broken in favor of "
-                msg += profile.cand_names[next_cand] + ","
+                msg += str(next_cand) + ","
                 msg += "\n candidates "
                 msg += str_set_of_candidates(tied_cands, cand_names=profile.cand_names)
                 msg += f" are tied (all would impose a maximum cost of {cost})."
@@ -1717,11 +1772,11 @@ def compute_rule_x(
                     )
                 output.details("")
 
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _rule_x_algorithm(profile, committeesize, resolute, algorithm, skip_phragmen_phase=False):
@@ -1732,7 +1787,7 @@ def _rule_x_algorithm(profile, committeesize, resolute, algorithm, skip_phragmen
         poor = set()
         while len(rich) > 0:
             poor_budget = sum(budget[v] for v in poor)
-            q = division(1 - poor_budget, len(rich))
+            q = division(profile.costs[cand] - poor_budget, len(rich))
             new_poor = set([v for v in rich if budget[v] < q])
             if len(new_poor) == 0:
                 return q
@@ -1843,14 +1898,14 @@ def _rule_x_algorithm(profile, committeesize, resolute, algorithm, skip_phragmen
 
     final_committees.update([tuple(sorted(committee)) for committee, _ in commbugdets])
 
-    committees = sorted_committees(final_committees)
+    committees = sorted_project_sets(final_committees)
     if resolute:
         committees = [committees[0]]
     return committees, detailed_info
 
 
 def compute_rule_x_without_phragmen_phase(
-    profile, committeesize, algorithm="fastest", resolute=True
+    profile, budget, algorithm="fastest", resolute=True
 ):
     """Rule X with skip_phragmen_phase=True.
 
@@ -1858,7 +1913,7 @@ def compute_rule_x_without_phragmen_phase(
     """
     return compute_rule_x(
         profile,
-        committeesize,
+        budget,
         algorithm,
         resolute=resolute,
         skip_phragmen_phase=True,
@@ -1866,6 +1921,7 @@ def compute_rule_x_without_phragmen_phase(
 
 
 def compute_minimaxphragmen(profile, committeesize, algorithm="fastest", resolute=False):
+    # TODO: convert to PB
     """Phragmen's minimax rule (minimax-Phragmen).
 
     Minimizes the maximum load.
@@ -1911,7 +1967,7 @@ def compute_minimaxphragmen(profile, committeesize, algorithm="fastest", resolut
     if resolute:
         output.info("Computing only one winning committee (resolute=True)\n")
     output.details(f"Algorithm: {ALGORITHM_NAMES[algorithm]}\n")
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
@@ -1919,6 +1975,7 @@ def compute_minimaxphragmen(profile, committeesize, algorithm="fastest", resolut
 
 
 def compute_phragmen_enestroem(profile, committeesize, algorithm="fastest", resolute=True):
+    # TODO: convert to PB
     """Phragmen-Enestroem (aka Phragmen's first method, Enestroem's method).
 
     In every round the candidate with the highest combined budget of
@@ -1953,7 +2010,7 @@ def compute_phragmen_enestroem(profile, committeesize, algorithm="fastest", reso
             " (aka parallel universes tiebreaking) (resolute=False)\n"
         )
     output.details(f"Algorithm: {ALGORITHM_NAMES[algorithm]}\n")
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
@@ -1961,6 +2018,7 @@ def compute_phragmen_enestroem(profile, committeesize, algorithm="fastest", reso
 
 
 def _phragmen_enestroem_algorithm(profile, committeesize, resolute, algorithm):
+    # TODO: convert to PB
     """Algorithm for Phragmen-Enestroem."""
     if algorithm == "float-fractions":
         division = lambda x, y: x / y  # standard float division
@@ -2023,7 +2081,7 @@ def _phragmen_enestroem_algorithm(profile, committeesize, resolute, algorithm):
             voter_budgets_for_partial_committee = next_committees
 
     # get rid of duplicates and sort committees
-    committees = sorted_committees(
+    committees = sorted_project_sets(
         set([tuple(sorted(committee)) for _, committee in voter_budgets_for_partial_committee])
     )
     if resolute:
@@ -2033,6 +2091,7 @@ def _phragmen_enestroem_algorithm(profile, committeesize, resolute, algorithm):
 
 
 def compute_consensus_rule(profile, committeesize, algorithm="fastest", resolute=True):
+    # TODO: convert to PB
     """Consensus rule.
 
     Based on Perpetual Consensus from
@@ -2064,7 +2123,7 @@ def compute_consensus_rule(profile, committeesize, algorithm="fastest", resolute
             " (aka parallel universes tiebreaking) (resolute=False)\n"
         )
     output.details(f"Algorithm: {ALGORITHM_NAMES[algorithm]}\n")
-    output.info(str_committees_header(committees, winning=True))
+    output.info(str_project_sets_header(committees, winning=True))
     output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
     # end of optional output
 
@@ -2072,6 +2131,7 @@ def compute_consensus_rule(profile, committeesize, algorithm="fastest", resolute
 
 
 def _consensus_rule_algorithm(profile, committeesize, resolute, algorithm):
+    # TODO: convert to PB
     """Algorithm for the consensus rule."""
     if algorithm == "float-fractions":
         division = lambda x, y: x / y  # standard float division
@@ -2132,7 +2192,7 @@ def _consensus_rule_algorithm(profile, committeesize, resolute, algorithm):
         [tuple(sorted(committee)) for _, committee in voter_budgets_for_partial_committee]
     )
     # sort committees
-    committees = sorted_committees(set(committee) for committee in committees)
+    committees = sorted_project_sets(set(committee) for committee in committees)
     if resolute:
         committees = [committees[0]]
     detailed_info = {}

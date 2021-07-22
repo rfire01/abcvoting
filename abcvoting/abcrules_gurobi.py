@@ -3,7 +3,7 @@ Approval-based committee (ABC) rules implemented as a integer linear
 programs (ILPs) with Gurobi (https://www.gurobi.com/)
 """
 
-from abcvoting.misc import sorted_committees
+from abcvoting.misc import sorted_project_sets
 
 try:
     import gurobipy as gb
@@ -15,7 +15,7 @@ except ImportError:
 GUROBI_ACCURACY = 1e-8  # 1e-9 causes problems (some unit tests fail)
 
 
-def _optimize_rule_gurobi(set_opt_model_func, profile, committeesize, resolute):
+def _optimize_rule_gurobi(set_opt_model_func, profile, resolute):
     """Compute rules, which are given in the form of an optimization problem, using Gurobi.
 
     Parameters
@@ -41,7 +41,7 @@ def _optimize_rule_gurobi(set_opt_model_func, profile, committeesize, resolute):
         raise ImportError("Gurobi (gurobipy) not available.")
 
     maxscore = None
-    committees = []
+    project_sets = []
 
     # TODO add a max iterations parameter with fancy default value which works in almost all
     #  cases to avoid endless hanging computations, e.g. when CI runs the tests
@@ -49,14 +49,14 @@ def _optimize_rule_gurobi(set_opt_model_func, profile, committeesize, resolute):
         model = gb.Model()
 
         # `in_committee` is a binary variable indicating whether `cand` is in the committee
-        in_committee = model.addVars(profile.num_cand, vtype=gb.GRB.BINARY, name="in_committee")
+        in_project_set = model.addVars(profile.cand_names, vtype=gb.GRB.BINARY, name="in_committee")
 
-        set_opt_model_func(model, in_committee)
+        set_opt_model_func(model, in_project_set)
 
         # find a new committee that has not been found yet by excluding previously found committees
-        for committee in committees:
+        for project_set in project_sets:
             model.addConstr(
-                gb.quicksum(in_committee[cand] for cand in committee) <= committeesize - 1
+                gb.quicksum(in_project_set[cand] for cand in project_set) <= len(project_set) - 1
             )
 
         model.setParam("OutputFlag", False)
@@ -75,7 +75,7 @@ def _optimize_rule_gurobi(set_opt_model_func, profile, committeesize, resolute):
                 "Warning: solutions may be incomplete or not optimal."
             )
         elif model.Status != 2:
-            if len(committees) == 0:
+            if len(project_sets) == 0:
                 # we are in the first round of searching for committees
                 # and Gurobi didn't find any
                 raise RuntimeError("Gurobi found no solution")
@@ -93,24 +93,22 @@ def _optimize_rule_gurobi(set_opt_model_func, profile, committeesize, resolute):
             # no longer optimal
             break
 
-        committee = set(
-            cand for cand in profile.candidates if in_committee[cand].Xn >= 1 - GUROBI_ACCURACY
+        project_set = set(
+            cand for cand in profile.cand_names if in_project_set[cand].Xn >= 1 - GUROBI_ACCURACY
         )
-        if len(committee) != committeesize:
-            raise RuntimeError(
-                "_optimize_rule_gurobi produced a committee with "
-                "fewer than `committeesize` members."
-            )
-        committees.append(committee)
+
+        project_sets.append(project_set)
 
         if resolute:
             break
 
-    return committees
+    return project_sets
 
 
-def _gurobi_thiele_methods(profile, committeesize, scorefct, resolute):
-    def set_opt_model_func(model, in_committee):
+def _gurobi_thiele_methods(profile, budget, scorefct, resolute):
+    project_limit = int(budget / profile.min_cost)  # maximum number of projects that can be funded
+
+    def set_opt_model_func(model, in_project_set):
         # utility[(voter, l)] contains (intended binary) variables counting the number of approved
         # candidates in the selected committee by `voter`. This utility[(voter, l)] is true for
         # exactly the number of candidates in the committee approved by `voter` for all
@@ -124,20 +122,25 @@ def _gurobi_thiele_methods(profile, committeesize, scorefct, resolute):
         utility = {}
 
         for voter in profile:
-            for l in range(1, committeesize + 1):
+            for l in range(1, project_limit):
                 utility[(voter, l)] = model.addVar(ub=1.0)
                 # should be binary. this is guaranteed since the objective
                 # is maximal if all utilitity-values are either 0 or 1.
                 # using vtype=gb.GRB.BINARY does not change result, but makes things slower a bit
 
         # constraint: the committee has the required size
-        model.addConstr(gb.quicksum(in_committee) == committeesize)
+        left_over_budget = budget - in_project_set.prod(profile.costs)
+        model.addConstr(in_project_set.prod(profile.costs) <= budget)
+
+        for cand in profile.cand_names:
+            model.addConstr((in_project_set[cand] == 0) >> (left_over_budget + 1e-6 <= profile.costs[cand]))
+
 
         # constraint: utilities are consistent with actual committee
         for voter in profile:
             model.addConstr(
-                gb.quicksum(utility[voter, l] for l in range(1, committeesize + 1))
-                == gb.quicksum(in_committee[cand] for cand in voter.approved)
+                gb.quicksum(utility[voter, l] for l in range(1, project_limit))
+                == gb.quicksum(in_project_set[cand] for cand in voter.approved)
             )
 
         # objective: the PAV score of the committee
@@ -145,20 +148,21 @@ def _gurobi_thiele_methods(profile, committeesize, scorefct, resolute):
             gb.quicksum(
                 float(scorefct(l)) * voter.weight * utility[(voter, l)]
                 for voter in profile
-                for l in range(1, committeesize + 1)
+                for l in range(1, project_limit)
             ),
             gb.GRB.MAXIMIZE,
         )
 
-    score_values = [scorefct(l) for l in range(1, committeesize + 1)]
+    score_values = [scorefct(l) for l in range(1, project_limit)]
+    is_av = all(score == 1 for score in score_values)
     if not all(
         first > second or first == second == 0
         for first, second in zip(score_values, score_values[1:])
-    ):
+    ) and not is_av:
         raise ValueError("scorefct must be monotonic decreasing")
 
-    committees = _optimize_rule_gurobi(set_opt_model_func, profile, committeesize, resolute)
-    return sorted_committees(committees)
+    project_sets = _optimize_rule_gurobi(set_opt_model_func, profile, resolute)
+    return sorted_project_sets(project_sets)
 
 
 def _gurobi_monroe(profile, committeesize, resolute):
@@ -218,7 +222,7 @@ def _gurobi_monroe(profile, committeesize, resolute):
     committees = _optimize_rule_gurobi(
         set_opt_model_func, profile, committeesize, resolute=resolute
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _gurobi_minimaxphragmen(profile, committeesize, resolute):
@@ -273,7 +277,7 @@ def _gurobi_minimaxphragmen(profile, committeesize, resolute):
     committees = _optimize_rule_gurobi(
         set_opt_model_func, profile, committeesize, resolute=resolute
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _gurobi_minimaxav(profile, committeesize, resolute):
@@ -305,4 +309,4 @@ def _gurobi_minimaxav(profile, committeesize, resolute):
     committees = _optimize_rule_gurobi(
         set_opt_model_func, profile, committeesize, resolute=resolute
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)

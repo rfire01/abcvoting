@@ -3,7 +3,7 @@ Approval-based committee (ABC) rules implemented as a integer linear
 programs (ILPs) with CVXPY.
 """
 
-from abcvoting.misc import sorted_committees
+from abcvoting.misc import sorted_project_sets
 
 try:
     import cvxpy as cp
@@ -149,4 +149,4 @@ def cvxpy_thiele_methods(profile, committeesize, scorefct_id, resolute, solver_i
         if resolute:
             break
 
-    return sorted_committees(committees)
+    return project_sets(committees)

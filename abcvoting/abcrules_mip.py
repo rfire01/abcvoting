@@ -4,7 +4,7 @@ Approval-based committee (ABC) rules implemented as (mixed) integer linear progr
 """
 
 import mip
-from abcvoting.misc import sorted_committees
+from abcvoting.misc import sorted_project_sets
 from abcvoting.output import output, DEBUG
 
 
@@ -173,7 +173,7 @@ def _mip_thiele_methods(profile, committeesize, scorefct, resolute, solver_id):
         resolute=resolute,
         solver_id=solver_id,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _mip_monroe(profile, committeesize, resolute, solver_id):
@@ -239,7 +239,7 @@ def _mip_monroe(profile, committeesize, resolute, solver_id):
         resolute=resolute,
         solver_id=solver_id,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _mip_minimaxphragmen(profile, committeesize, resolute, solver_id):
@@ -303,7 +303,7 @@ def _mip_minimaxphragmen(profile, committeesize, resolute, solver_id):
         resolute=resolute,
         solver_id=solver_id,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _mip_minimaxav(profile, committeesize, resolute, solver_id):
@@ -342,4 +342,4 @@ def _mip_minimaxav(profile, committeesize, resolute, solver_id):
         resolute=resolute,
         solver_id=solver_id,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)

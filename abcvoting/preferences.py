@@ -7,8 +7,11 @@ Preference profiles and voters
 """
 
 
-from abcvoting.misc import str_set_of_candidates
 from collections import OrderedDict
+from collections import defaultdict
+from functools import cached_property
+
+from abcvoting.misc import str_set_of_candidates
 
 
 class Profile(object):
@@ -27,19 +30,25 @@ class Profile(object):
 
     """
 
-    def __init__(self, num_cand, cand_names=None):
+    def __init__(self, num_cand, cand_names=None, costs=None):
         if num_cand <= 0:
             raise ValueError(str(num_cand) + " is not a valid number of candidates")
         self.candidates = list(range(num_cand))
         self._voters = []
         self.cand_names = [str(cand) for cand in range(num_cand)]
-        if cand_names:
+        if cand_names is not None:
             if len(cand_names) < num_cand:
                 raise ValueError(
                     f"cand_names {str(cand_names)} has length {len(cand_names)}"
                     f"< num_cand ({num_cand})"
                 )
-            self.cand_names = [str(cand_names[i]) for i in range(num_cand)]
+            self.cand_names = [cand_names[i] for i in range(num_cand)]
+
+        if costs is None:
+            self.costs = {cand: 1 for cand in self.cand_names}
+
+        else:
+            self.costs = costs
 
     @property
     def num_cand(self):  # number of candidates
@@ -47,6 +56,18 @@ class Profile(object):
 
     def __len__(self):
         return len(self._voters)
+
+    @cached_property
+    def min_cost(self):
+        return min(self.costs.values())
+
+    def project_set_cost(self, project_set):
+        return sum(self.costs[project] for project in project_set)
+
+    def exhausted_budget(self, project_set, budget):
+        budget_left = budget - self.project_set_cost(project_set)
+        return all(cost > budget_left for project, cost in self.costs.items()
+                   if project not in project_set)
 
     def add_voter(self, voter):
         """
@@ -64,6 +85,7 @@ class Profile(object):
             _voter = voter
         else:
             _voter = Voter(voter)
+            # raise TypeError(f"Given voter is of type {type(voter)}, expected {type(Voter)}")
 
         # this check is a bit redundant, but needed to check for consistency with self.num_cand
         _voter.check_valid(self.num_cand)
@@ -158,23 +180,23 @@ class Voter:
     A set of approved candidates by one voter.
     """
 
-    def __init__(self, approved, weight=1):
+    def __init__(self, approved, weight=1, utilities=None):
         self.approved = set(approved)  # approval set, i.e., the set of approved candidates
         self.weight = weight
+
+        if utilities is None:
+            self.utilities = {candidate: 1 for candidate in self.approved}
+
+        else:
+            self.utilities = utilities
+
+        self.utilities = defaultdict(lambda: 0, self.utilities)
 
         # does not check for num_cand, because not known here
         self.check_valid(approved_raw=approved)
 
     def __str__(self):
         return str(list(self.approved))
-
-    # some shortcuts, removed for clarity
-    #
-    # def __len__(self):
-    #    return len(self.approved)
-    #
-    # def __iter__(self):
-    #     return iter(self.approved)
 
     def check_valid(self, num_cand=float("inf"), approved_raw=None):
         """
@@ -188,11 +210,11 @@ class Voter:
             )
 
         # note: empty approval sets are fine
-        for candidate in self.approved:
-            if not isinstance(candidate, int):
-                raise TypeError(
-                    f"Object of type {str(type(candidate))} not suitable as candidate, "
-                    f"only positive integers allowed."
-                )
-            if candidate < 0 or candidate >= num_cand:
-                raise ValueError(str(self) + " not valid for num_cand = " + str(num_cand))
+        # for candidate in self.approved:
+        #     if not isinstance(candidate, int):
+        #         raise TypeError(
+        #             f"Object of type {str(type(candidate))} not suitable as candidate, "
+        #             f"only positive integers allowed."
+        #         )
+        #     if candidate < 0 or candidate >= num_cand:
+        #         raise ValueError(str(self) + " not valid for num_cand = " + str(num_cand))

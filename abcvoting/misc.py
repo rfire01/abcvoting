@@ -3,11 +3,11 @@ Miscellaneous functions for committees (i.e., subsets of candidates)
 """
 
 
-def sorted_committees(committees):
+def sorted_project_sets(project_sets):
     """
     sorts a list of committees, ensures that committees are sets
     """
-    return sorted([set(committee) for committee in committees], key=str)
+    return sorted([set(project_set) for project_set in project_sets], key=str)
 
 
 def check_enough_approved_candidates(profile, committeesize):
@@ -28,24 +28,25 @@ def str_set_of_candidates(candset, cand_names=None):
     """
     nicely format a single committee
     """
-    if cand_names is None:
-        namedset = [str(cand) for cand in candset]
-    else:
-        namedset = [cand_names[cand] for cand in candset]
-    return "{" + ", ".join(map(str, namedset)) + "}"
+    # if cand_names is None:
+    #     namedset = [str(cand) for cand in candset]
+    # else:
+    #     namedset = [cand_names[cand] for cand in candset]
+    # return "{" + ", ".join(map(str, namedset)) + "}"
+    return "{" + ", ".join(map(str, candset)) + "}"
 
 
-def str_sets_of_candidates(committees, cand_names=None):
+def str_sets_of_candidates(project_sets, cand_names=None):
     """
     nicely format a list of committees
     """
     output = ""
-    for committee in sorted(map(tuple, committees)):
-        output += f" {str_set_of_candidates(committee, cand_names)}\n"
+    for project_set in sorted(map(tuple, project_sets)):
+        output += f" {str_set_of_candidates(project_set, cand_names)}\n"
     return output
 
 
-def str_committees_header(committees, winning=False):
+def str_project_sets_header(project_sets, winning=False):
     """
     nicely format a header for a list of committees,
     stating how many committees there are
@@ -53,19 +54,19 @@ def str_committees_header(committees, winning=False):
     winning: write "winning committee" instead of "committee"
     """
     output = ""
-    if committees is None or len(committees) < 1:
+    if project_sets is None or len(project_sets) < 1:
         if winning:
-            return "No winning committees (this should not happen)"
+            return "No winning project set (this should not happen)"
         else:
-            return "No committees"
+            return "No project sets"
     if winning:
-        commstring = "winning committee"
+        commstring = "winning project set"
     else:
-        commstring = "committee"
-    if len(committees) == 1:
+        commstring = "project set"
+    if len(project_sets) == 1:
         output += "1 " + commstring + ":"
     else:
-        output += str(len(committees)) + " " + commstring + "s:"
+        output += str(len(project_sets)) + " " + commstring + "s:"
     return output
 
 

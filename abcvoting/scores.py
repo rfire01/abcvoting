@@ -132,7 +132,8 @@ def marginal_thiele_scores_add(scorefct, profile, committee):
     marginal score increase when adding candidate i.
     Candidates that are already in the committee receive a small value (-1).
     """
-    marg = [0] * profile.num_cand
+    marg = {cand: 0 for cand in profile.cand_names}
+    # marg = [0] * profile.num_cand
     for voter in profile:
         for cand in voter.approved:
             if voter.approved & set(committee):

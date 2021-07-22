@@ -4,7 +4,7 @@ Approval-based committee (ABC) rules implemented as constraint
 """
 
 from ortools.sat.python import cp_model
-from abcvoting.misc import sorted_committees
+from abcvoting.misc import sorted_project_sets
 
 
 def _optimize_rule_ortools(set_opt_model_func, profile, committeesize, resolute):
@@ -142,7 +142,7 @@ def _ortools_cc(profile, committeesize, resolute):
         committeesize,
         resolute=resolute,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _ortools_monroe(profile, committeesize, resolute):
@@ -216,7 +216,7 @@ def _ortools_monroe(profile, committeesize, resolute):
         committeesize,
         resolute=resolute,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
 
 
 def _ortools_minimaxav(profile, committeesize, resolute):
@@ -255,4 +255,4 @@ def _ortools_minimaxav(profile, committeesize, resolute):
         committeesize,
         resolute=resolute,
     )
-    return sorted_committees(committees)
+    return sorted_project_sets(committees)
