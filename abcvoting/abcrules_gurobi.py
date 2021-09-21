@@ -101,11 +101,15 @@ def _optimize_rule_gurobi(set_opt_model_func, profile, resolute):
 
         if resolute:
             break
+        else:
+            sw = 0
+            for voter in profile:
+                sw += len(project_set & voter.approved)
 
     return project_sets
 
 
-def _gurobi_thiele_methods(profile, budget, scorefct, resolute):
+def _gurobi_thiele_methods(profile, budget, scorefct, resolute, counter_objective=None):
     project_limit = int(budget / profile.min_cost)  # maximum number of projects that can be funded
 
     def set_opt_model_func(model, in_project_set):
@@ -138,10 +142,29 @@ def _gurobi_thiele_methods(profile, budget, scorefct, resolute):
 
         # constraint: utilities are consistent with actual committee
         for voter in profile:
-            model.addConstr(
-                gb.quicksum(utility[voter, l] for l in range(1, project_limit))
-                == gb.quicksum(in_project_set[cand] for cand in voter.approved)
+            try:
+                model.addConstr(
+                    gb.quicksum(utility[voter, l] for l in range(1, project_limit))
+                    == gb.quicksum(in_project_set[cand] for cand in voter.approved)
+                )
+            except:
+                a=1
+
+        if counter_objective == 'av':
+            co_value = gb.quicksum(
+                voter.weight * utility[(voter, l)]
+                for voter in profile
+                for l in range(1, project_limit)
             )
+
+        elif counter_objective == 'cc':
+            co_value = gb.quicksum(
+                voter.weight * utility[(voter, 1)]
+                for voter in profile
+            )
+
+        else:
+            co_value = 0
 
         # objective: the PAV score of the committee
         model.setObjective(
@@ -149,7 +172,7 @@ def _gurobi_thiele_methods(profile, budget, scorefct, resolute):
                 float(scorefct(l)) * voter.weight * utility[(voter, l)]
                 for voter in profile
                 for l in range(1, project_limit)
-            ),
+            ) - co_value * 10e-4,
             gb.GRB.MAXIMIZE,
         )
 

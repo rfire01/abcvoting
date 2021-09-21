@@ -407,7 +407,7 @@ def compute(rule_id, profile, budget, expected_committees=None, **kwargs):
 
 
 def compute_thiele_method(
-    profile, budget, scorefct_id, algorithm="fastest", resolute=False
+    profile, budget, scorefct_id, algorithm="fastest", resolute=False, counter_objective=None
 ):
     """Thiele methods.
 
@@ -433,7 +433,7 @@ def compute_thiele_method(
 
     if algorithm == "gurobi":
         project_sets = abcrules_gurobi._gurobi_thiele_methods(
-            profile, budget, scorefct, resolute
+            profile, budget, scorefct, resolute, counter_objective
         )
     elif algorithm == "branch-and-bound":
         project_sets, detailed_info = _thiele_methods_branchandbound(
@@ -549,7 +549,8 @@ def _thiele_methods_branchandbound(profile, committeesize, scorefct_id, resolute
     return committees, detailed_info
 
 
-def compute_pav(profile, budget, algorithm="fastest", resolute=False):
+def compute_pav(profile: object, budget: object, algorithm: object = "fastest", resolute: object = False,
+                counter_objective: object = None) -> object:
     """Proportional Approval Voting (PAV).
 
     This ABC rule belongs to the class of Thiele methods.
@@ -560,7 +561,7 @@ def compute_pav(profile, budget, algorithm="fastest", resolute=False):
     https://arxiv.org/abs/2007.01795
     """
     return compute_thiele_method(
-        profile, budget, "pav", algorithm=algorithm, resolute=resolute
+        profile, budget, "pav", algorithm=algorithm, resolute=resolute, counter_objective=counter_objective
     )
 
 
@@ -580,7 +581,7 @@ def compute_slav(profile, budget, algorithm="fastest", resolute=False):
     )
 
 
-def compute_cc(profile, budget, algorithm="fastest", resolute=False):
+def compute_cc(profile, budget, algorithm="fastest", resolute=False, counter_objective=None):
     """Approval Chamberlin-Courant (CC).
 
     This ABC rule belongs to the class of Thiele methods.
@@ -591,12 +592,12 @@ def compute_cc(profile, budget, algorithm="fastest", resolute=False):
     https://arxiv.org/abs/2007.01795
     """
     return compute_thiele_method(
-        profile, budget, "cc", algorithm=algorithm, resolute=resolute
+        profile, budget, "cc", algorithm=algorithm, resolute=resolute, counter_objective=counter_objective
     )
 
 
 def compute_seq_thiele_method(
-    profile, budget, scorefct_id, algorithm="fastest", resolute=True
+    profile, budget, scorefct_id, algorithm="fastest", resolute=True, counter_objective=None
 ):
     """Sequential Thiele methods.
 
@@ -619,7 +620,7 @@ def compute_seq_thiele_method(
         )
 
     if resolute:
-        committees, detailed_info = _seq_thiele_resolute(profile, budget, scorefct_id)
+        committees, detailed_info = _seq_thiele_resolute(profile, budget, scorefct_id, counter_objective)
     else:
         committees, detailed_info = _seq_thiele_irresolute(profile, budget, scorefct_id)
 
@@ -655,22 +656,23 @@ def compute_seq_thiele_method(
                 )
             output.details("")
 
-    output.info(str_project_sets_header(committees, winning=True))
-    output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
+    return [committee]
+    # output.info(str_project_sets_header(committees, winning=True))
+    # output.info(str_sets_of_candidates(committees, cand_names=profile.cand_names))
+    #
+    # output.details(scorefct_id.upper() + "-score of winning committee(s):")
+    # for committee in committees:
+    #     output.details(
+    #         f" {str_set_of_candidates(committee, cand_names=profile.cand_names)}: "
+    #         f"{scores.thiele_score(scorefct_id, profile, committee)}"
+    #     )
+    # output.details("\n")
+    # # end of optional output
+    #
+    # return sorted_project_sets(committees)
 
-    output.details(scorefct_id.upper() + "-score of winning committee(s):")
-    for committee in committees:
-        output.details(
-            f" {str_set_of_candidates(committee, cand_names=profile.cand_names)}: "
-            f"{scores.thiele_score(scorefct_id, profile, committee)}"
-        )
-    output.details("\n")
-    # end of optional output
 
-    return sorted_project_sets(committees)
-
-
-def _seq_thiele_resolute(profile, budget, scorefct_id):
+def _seq_thiele_resolute(profile, budget, scorefct_id, counter_objective=None):
     """Compute one winning committee (=resolute) for sequential Thiele methods.
 
     Tiebreaking between candidates in favor of candidate with smaller
@@ -680,28 +682,58 @@ def _seq_thiele_resolute(profile, budget, scorefct_id):
     scorefct = scores.get_scorefct(scorefct_id)
     detailed_info = {"next_cand": [], "tied_cands": [], "delta_score": []}
 
+
+    project_to_voters = {project: [] for project in profile.cand_names}
+    for voter in profile:
+        for project in voter.approved:
+            project_to_voters[project].append(voter)
+
+    voters_funded = {voter: 0 for voter in profile}
     # build a committee starting with the empty set
     current_budget = budget
     while True:
-        additional_score_cand = scores.marginal_thiele_scores_add(scorefct, profile, committee)
+        additional_score_cand = {project: sum(1 / (voters_funded[voter] + 1) for voter in project_to_voters[project])
+                                 for project in project_to_voters}
+        # additional_score_cand = {}
+        # additional_score_cand = {project: sum(1 / (voters_funded[voter] + 1) for voter in project_to_voters[project]
+        #                          for project in project_to_voters}
+        # for project in project_to_voters:
+        #     additional_score_cand[project] = sum(1 / (voters_funded[voter] + 1) for voter in project_to_voters[project])
+
+        for project in committee:
+            additional_score_cand[project] = - 1
+        # additional_score_cand = scores.marginal_thiele_scores_add(scorefct, profile, committee)
         sorted_candidates = sorted(additional_score_cand, key=additional_score_cand.get, reverse=True)
+
 
         next_cand = None
         for cand in sorted_candidates:
-            if profile.costs[cand] <= current_budget:
+            if profile.costs[cand] <= current_budget and cand not in committee:
                 next_cand = cand
                 break
 
         if next_cand is None:
             break
 
-        committee.append(next_cand)
         tied_cands = [
             cand
             for cand in additional_score_cand
             if additional_score_cand[cand] == additional_score_cand[next_cand] and
                profile.costs[cand] <= current_budget
         ]
+
+        if counter_objective == 'av':
+            next_cand = min(tied_cands, key=lambda x: len(project_to_voters[x]))
+
+        elif counter_objective == "cc":
+            satisfied_voters = set([voter for voter in profile if voters_funded[voter] > 0])
+            cc_marginal = {cand: len(set(project_to_voters[cand]) - satisfied_voters) for cand in tied_cands}
+            next_cand = min(tied_cands, key=lambda x: cc_marginal[x])
+
+        for voter in project_to_voters[next_cand]:
+            voters_funded[voter] += 1
+
+        committee.append(next_cand)
         current_budget = current_budget - profile.costs[next_cand]
 
         detailed_info["next_cand"].append(next_cand)
@@ -719,25 +751,43 @@ def _seq_thiele_irresolute(profile, budget, scorefct_id):
     """
     scorefct = scores.get_scorefct(scorefct_id)
 
-    comm_scores = {(): 0}
+    project_to_voters = {project: [] for project in profile.cand_names}
+    for voter in profile:
+        for project in voter.approved:
+            project_to_voters[project].append(voter)
+
+    voters_funded = {voter: 0 for voter in profile}
+
+    comm_scores = {(): (0, voters_funded)}
     # build committees starting with the empty set
     # for _ in range(committeesize):
 
     exhausted_sets = {}
     while True:
         comm_scores_next = {}
-        for committee, score in comm_scores.items():
+        for committee, (score, voters_funded) in comm_scores.items():
             if profile.exhausted_budget(committee, budget):
                 exhausted_sets[committee] = score
                 continue
 
+            additional_score_cand = {
+                project: sum(1 / (voters_funded[voter] + 1) for voter in project_to_voters[project])
+                for project in project_to_voters}
+
+            for project in committee:
+                additional_score_cand[project] = - 1
+
             # marginal utility gained by adding candidate to the committee
-            additional_score_cand = scores.marginal_thiele_scores_add(scorefct, profile, committee)
+            # additional_score_cand = scores.marginal_thiele_scores_add(scorefct, profile, committee)
             max_marginal = max(additional_score_cand.values())
             for cand in profile.cand_names:
                 if additional_score_cand[cand] >= max_marginal:
                     next_comm = tuple(sorted(committee + (cand,)))
-                    comm_scores_next[next_comm] = score + additional_score_cand[cand]
+
+                    for voter in project_to_voters[cand]:
+                        voters_funded[voter] += 1
+
+                    comm_scores_next[next_comm] = (score + additional_score_cand[cand], voters_funded)
 
         if comm_scores_next == {}:
             break
@@ -749,7 +799,7 @@ def _seq_thiele_irresolute(profile, budget, scorefct_id):
 
 
 # Sequential PAV
-def compute_seqpav(profile, budget, algorithm="fastest", resolute=True):
+def compute_seqpav(profile, budget, algorithm="fastest", resolute=True, counter_objective=None):
     """Sequential PAV (seq-PAV).
 
     For a mathematical description of this rule, see e.g. the survey by
@@ -758,7 +808,7 @@ def compute_seqpav(profile, budget, algorithm="fastest", resolute=True):
     https://arxiv.org/abs/2007.01795
     """
     return compute_seq_thiele_method(
-        profile, budget, "pav", algorithm=algorithm, resolute=resolute
+        profile, budget, "pav", algorithm=algorithm, resolute=resolute, counter_objective=counter_objective
     )
 
 
@@ -1069,7 +1119,7 @@ def compute_sav(profile, budget, algorithm="fastest", resolute=False):
     return compute_separable_rule("sav", profile, budget, algorithm, resolute)
 
 
-def compute_av(profile, budget, algorithm="fastest", resolute=False):
+def compute_av(profile, budget, algorithm="fastest", resolute=False, counter_objective=None):
     """Approval Voting (AV).
 
     AV is both a Thiele method and a separable rule. Seperable rules can be computed much
@@ -1082,7 +1132,7 @@ def compute_av(profile, budget, algorithm="fastest", resolute=False):
     https://arxiv.org/abs/2007.01795
     """
     return compute_thiele_method(
-        profile, budget, "av", algorithm=algorithm, resolute=resolute
+        profile, budget, "av", algorithm=algorithm, resolute=resolute, counter_objective=counter_objective
     )
     # return compute_separable_rule("av", profile, budget, algorithm, resolute)
 
